@@ -1,0 +1,187 @@
+Predict How Well Your Activities Are Using Data From Accelerometers
+========================================================
+
+```{r,echo=FALSE,results='hide',warning=FALSE,message=FALSE}
+#set the environment and load the library needed, please be noticed that you should set the directory to your local working directory acoordingly
+#local.directory="d:/course/datascience/predmachlearn-002/machinelearning/"
+library(caret)
+library(tree)
+library(randomForest)
+library(ggplot2)
+library(class)
+#help function to calculate the accuracy
+accuracy = function(model, outcome, dataset, predict_type="class") {
+  confusion.matrix = as.matrix(table(outcome, predict(model, dataset, type=predict_type)))
+  sum(diag(confusion.matrix)/sum(confusion.matrix))
+}
+```
+# Introduction
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement â€? a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. 
+
+In this project, our goal is to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants to predict their activity. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways.
+
+# Data Clean
+
+```{r,results='hide',echo=FALSE}
+Har=read.csv(paste(local.directory,"pml-training.csv",sep=''),na.strings=c("NA",""))
+summary(Har)
+dim(Har)
+
+#remove columns with many missing values,if 70% is NA then we remove that column
+filter=colSums(!is.na(Har))/dim(Har)[1]>0.3
+Har.clean=Har[,filter]
+
+#remove column 1~7 as no relation to our prediction
+Har.clean=Har.clean[,-1:-7]
+# create training and test sets
+set.seed(201406)
+inTrain=createDataPartition(y=Har.clean$classe,p=0.6,list=FALSE)
+training=Har.clean[inTrain,]
+testing=Har.clean[-inTrain,]
+dim(training)
+dim(testing)
+```
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har (http://groupware.les.inf.pucrio.br/har). The training data for this project are available here: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv(https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv).And we have already downloaded it at our local working directory.
+
+Loading the training data we found that there are 19622 obervations ,160 columns.Meanwhile we see there are many features which do not have any meansurement.So we decided that for a feature if >70% of measurements are not available we will remove it.By doing this we get only 60 column left.In the remain columns , colum 1 is just an index and column 2 is `user_name`, both have no relation to our study. For column 3~7, they are time stamp, and recording windows which have no relaship to our accelerometers meansurements, so they can be removed also.In the end we get a total data set with 52 feature columns, `classe` as the response.
+
+Then we partitioned the data into a training data set and testing set using `createDataPartition` function from `caret` package with p=0.6,`classe` as the response variable(random seed set as 201406).This gives us 11776 obervations in training and 7846 observations in validation set.There are no NAs in our training and test data after our data clean process.
+
+# Exploratory Analysis
+
+```{r,results='hide',echo=FALSE}
+svd1 = svd(scale(training[,-53]))
+```
+
+As there are 52 features , so we decided to first have a feature compression with SVD[1,2].The singular value and the percent of variance of explained plot are Figure 1.
+
+```{r,echo=FALSE}
+par(mfrow=c(1,2))
+plot(svd1$d, xlab="Column", ylab="Singular value", pch=19)
+svd1Pct = svd1$d^2/sum(svd1$d^2)
+plot(svd1Pct, xlab="Column", ylab="Percent of variance explained", pch=19)
+```
+
+From the picture we see only 5 features have >5% percent of variance impact ,they are `accel_belt_x,magnet_belt_x,yaw_belt,gyros_belt_y,gyros_arm_z`. Another thing we noticed that quite many singular values are bellow 50. From Figure 2 we see the top 20 features can explain already >90% of the variance.
+
+```{r,echo=FALSE}
+totalPct=rep(0,52)
+n=dim(training)[2]-1
+for(i in 1:n){
+  totalPct[i]=sum(svd1Pct[1:i])
+}
+plot(totalPct, xlab="Column", ylab="Total Percent of variance explained", pch=19)
+```
+
+```{r,echo=FALSE,results='hide'}
+variance.order=order(svd1$v[,2],decreasing=T)
+filter.names=names(training)[variance.order[1:20]]
+training.tree=training[,c(filter.names,"classe")]
+```
+
+These features are `accel_belt_x,magnet_belt_x,yaw_belt,gyros_belt_y,gyros_arm_z,gyros_forearm_x,gyros_belt_x,roll_belt,total_accel_belt,magnet_dumbbell_y,accel_dumbbell_y,total_accel_dumbbell,roll_dumbbell,magnet_forearm_z,magnet_belt_z,total_accel_forearm,accel_belt_y,accel_forearm_y,gyros_forearm_z,magnet_belt_y`.
+
+# Modeling
+
+With the 20 features we got from the exploratory analysis, we first made a tree analysis.With this model we got 67% accuracy rate for both training data and our validation data, the misclassification errow was 33%.
+
+Here the accuracy was calculated as number of corrected predicted class divided by total classes to be predicted.
+
+```{r}
+accuracy = function(model, outcome, dataset, predict_type="class") {
+  confusion.matrix = as.matrix(table(outcome, predict(model, dataset, type=predict_type)))
+  sum(diag(confusion.matrix)/sum(confusion.matrix))
+}
+```
+
+The results on our testing data are detailed as bellow:
+
+```{r,echo=FALSE}
+activity.tree <- tree(classe~., data=training)
+activity.tree.cm=confusionMatrix(testing$classe, predict(activity.tree, testing, type="class"))
+activity.tree.cm$table
+#activity.tree.cm$byClass
+```
+
+```{r,results='hide',echo=FALSE}
+summary(activity.tree)
+#tree model with accuracy 0.698, 0.685 for training and testing data
+accuracy(activity.tree, training$classe, training)
+accuracy(activity.tree, testing$classe, testing)
+```
+
+If we use all the 52 features in initial training data to build the tree model, the accuracy will be only increased to 69% for testing data, no substanial increase. This also proved that our feature compression is correct.
+ 
+The prediction for tree model was not at sastisfactory rate, so we tried a random forest model[3] again.The random forest model gives on 100% accuracy rate on training data,96.9% accuracy rate on testing data which is quite impressive.
+
+```{r}
+# random forest
+activity.rf <- randomForest(classe~., data=training.tree)
+accuracy(activity.rf, training$classe, training)
+accuracy(activity.rf, testing$classe, testing)
+```
+
+The final results on testing data set was as bellow.The results was quite good on activity E, but on A,B,C,D we have some misclassification.Especially the results on activity C, the sensitity was only 94.4%.
+
+
+```{r,echo=FALSE}
+activity.rf.cm <- confusionMatrix(testing$classe, 
+                                  predict(activity.rf, testing, type="class"))
+activity.rf.cm$table
+```
+
+And the sensitivity and specificity for each activity are:
+
+```{r,echo=FALSE}
+activity.rf.cm$byClass[,c(1,2)]
+```
+
+The importance of each feature in the model was illustrated as Figure 3:
+
+```{r,echo=FALSE}
+par(mfrow=c(1,1))
+varImpPlot(activity.rf, pch=19, col="blue", 
+           main="Random forest model variable importance")
+```
+
+
+# Conclusion
+
+With the 20 features selected using random forest model we got one pretty good prediction.It predicts the five activity class "A,B,C,D,E" quite well.Overall we
+get a 96.9% accuracy on the test set, we can be in confident this model can be used as a
+good estimation model.The accuracy on activity "C" is relative low compare
+to other activities ,some more studies on model or measure different variables would be
+the future interest.
+
+# Reference
+
+1. Baker, Kirk. "Singular Value Decomposition Tutorial". URL:
+   <http://www.ling.ohio-state.edu/~kbaker/pubs/Singular_Value_Decomposition_Tutorial.pdf>.
+
+2. Trevor Hastie, Element Of Statistical Learning P308
+
+3. Explanation of the Random forest model URL:<http://www.stat.berkeley.edu/~breiman/RandomForests/cc_home.htm>
+
+
+
+```{r,results='hide',echo=FALSE}
+Har.test=read.csv(paste(local.directory,"pml-testing.csv",sep=''),na.strings=c("NA",""))
+name.filter=names(training)
+name.filter=name.filter[-53]
+Har.testing=Har.test[,name.filter]
+
+answer=predict(activity.rf, Har.testing, type="class")
+
+# Code For Submission
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,
+                row.names=FALSE,col.names=FALSE)
+  }
+}
+pml_write_files(answer)
+```
